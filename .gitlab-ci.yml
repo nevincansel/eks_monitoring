@@ -1,0 +1,48 @@
+image: docker.siemens.com/industrial-edge/tools/build-images/hub/istanbul-base-image:v0.9.13
+
+stages:
+  - install
+  - update
+  - destroy
+
+.install_app: &install_app
+  when: manual
+  script:
+    - chmod +x ./run.sh
+    - ./run.sh install
+  tags:
+    - docker
+    - privileges
+    - docker-exposed
+
+.update_app: &update_app
+  when: manual
+  script:
+    - chmod +x ./run.sh
+    - ./run.sh update
+  tags:
+    - docker
+    - privileges
+    - docker-exposed
+
+.destroy_app: &destroy_app
+  when: manual
+  script:
+    - chmod +x ./run.sh
+    - ./run.sh destroy
+  tags:
+    - docker
+    - privileges
+    - docker-exposed
+
+1-install_app:
+  stage: install
+  <<: *install_app
+
+2-update_app:
+  stage: update
+  <<: *update_app
+
+3-destroy_app:
+  stage: destroy
+  <<: *destroy_app

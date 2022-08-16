@@ -1,0 +1,12 @@
+apiVersion: v1
+data:
+  cluster.name: CLUSTER_NAME
+  logs.region: REGION_NAME
+  http.server: 'Off'
+  http.port: '2020'
+  read.head: 'Off'
+  read.tail: 'Off'
+kind: ConfigMap
+metadata:
+  name: fluent-bit-cluster-info
+  namespace: monitoring

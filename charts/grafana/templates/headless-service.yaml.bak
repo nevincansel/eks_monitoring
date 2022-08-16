@@ -1,0 +1,20 @@
+{{- if or .Values.headlessService (and .Values.persistence.enabled (not .Values.persistence.existingClaim) (eq .Values.persistence.type "statefulset"))}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "grafana.fullname" . }}-headless
+  namespace: {{ template "grafana.namespace" . }}
+  labels:
+    {{- include "grafana.labels" . | nindent 4 }}
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-extra-security-groups: sg-09345734768d3dfc4
+spec:
+  clusterIP: None
+  selector:
+    {{- include "grafana.selectorLabels" . | nindent 4 }}
+  type: ClusterIP
+  ports:
+  - protocol: TCP
+    port: 3000
+    targetPort: 3000
+{{- end }}

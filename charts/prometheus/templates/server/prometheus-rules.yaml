@@ -1,0 +1,208 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-server-conf
+  labels:
+    name: prometheus-server-conf
+  namespace: monitoring
+data:
+  prometheus.rules: |-
+    groups:
+    - name: Node Rules
+      rules:     
+      - alert: High Node CPU Usage 
+        expr: 100 - (avg by(instance) (irate(node_cpu{mode="idle"}[1m])) * 100) > 85 and  100 - (avg by(instance) (irate(node_cpu{mode="idle"}[1m])) * 100) < 90
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU load (instance {{`{{ $labels.instance }}`}})"
+          description: "CPU load is > 90%\n  VALUE = {{`{{ $value }}`}}\n  LABELS: {{`{{ $labels }}`}}"
+    
+      - alert: High Node CPU Usage Critical
+        expr: 100 - (avg by(instance) (irate(node_cpu{mode="idle"}[1m])) * 100) > 90 and 100 - (avg by(instance) (irate(node_cpu{mode="idle"}[1m])) * 100) < 100
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High CPU load (instance {{`{{ $labels.instance }}`}})"
+          description: "CPU load is > 95%\n  VALUE = {{`{{ $value }}`}}\n  LABELS: {{`{{ $labels }}`}}"          
+    
+      - alert: High Node Memory Usage
+        expr: 100 - ((node_memory_MemAvailable* 100) / node_memory_MemTotal) > 85 and 100 - ((node_memory_MemAvailable* 100) / node_memory_MemTotal) < 90
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Out of memory (instance {{`{{ $labels.instance }}`}})"
+          description: "Node memory is filling up (< 10% left)\n  VALUE = {{`{{ $value }}`}}\n  LABELS: {{`{{ $labels }}`}}"
+    
+    
+      - alert: High Node Memory Usage Critical
+        expr: 100 - ((node_memory_MemAvailable* 100) / node_memory_MemTotal) > 90 and 100 - ((node_memory_MemAvailable* 100) / node_memory_MemTotal) < 100
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Out of memory (instance {{`{{ $labels.instance }}`}})"
+          description: "Node memory is filling up (< 5% left)\n  VALUE = {{`{{ $value }}`}}\n  LABELS: {{`{{ $labels }}`}}"
+    
+    
+      - alert: High Node Disk Usage
+        expr: node_filesystem_free{device=~"/dev/mapper/.*"} / node_filesystem_size{device=~"/dev/mapper/.*"} * 100 < 10
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Out of disk space (instance {{`{{ $labels.instance }}`}})"
+          description: "Disk is almost full (< 10% left)\n  VALUE = {{`{{ $value }}`}}\n  LABELS: {{`{{ $labels }}`}}"
+    
+      - alert: High Node Disk Usage Critical
+        expr: node_filesystem_free{device=~"/dev/mapper/.*"} / node_filesystem_size{device=~"/dev/mapper/.*"} * 100 < 5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Out of disk space (instance {{`{{ $labels.instance }}`}})"
+          description: "Disk is almost full (< 5 % left)\n  VALUE = {{`{{ $value }}`}}\n  LABELS: {{`{{ $labels }}`}}"
+
+      - alert: Node Down
+        expr: avg(up{app="node-exporter"}) BY (instance) < 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node Down"
+          description: "Node (instances {{`{{ $labels.instance }}`}}) are up. There is a Node Down" 
+    
+    - name: Pod Rules
+      rules:
+      - alert: Pod Frequently Restarting
+        expr: increase(kube_pod_container_status_restarts_total[30m]) > 5
+        labels:
+          severity: critical
+        for: 10m
+        annotations:
+          summary: "More than 5 restarts in pod {{`{{ $labels.pod }}`}} in 30 Minutes"
+          description: "{{`{{ $labels.container }}`}} restarted (current value: {{`{{ $value }}`}}s) times in pod {{`{{ $labels.pod }}`}}/{{`{{ $labels.namespace }}`}}"
+    
+      - alert: Kubelet Down
+        expr: avg(up{job="kubernetes-nodes"})BY(kubernetes_io_hostname) <1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kubelet Down on (instance {{`{{ $labels.kubernetes_io_hostname }}`}})"
+          description: "Kubelet Down\n  VALUE = {{`{{ $value }}`}}\n  LABELS: {{`{{ $labels }}`}}"
+
+
+  prometheus.yml: |-
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        monitor: 'k8s-monitor'
+    rule_files:
+      - /etc/prometheus/prometheus.rules
+    alerting:
+      alertmanagers:
+      - scheme: http
+        static_configs:
+        - targets:
+          - "alertmanager.monitoring.svc:9093"
+    scrape_configs:  
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+        - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: default;kubernetes;https
+      - job_name: 'kubernetes-nodes'
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+        - role: node
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+        - role: pod
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          action: replace
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+          target_label: __address__
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: kubernetes_pod_name
+      - job_name: 'kubernetes-cadvisor'
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+        - role: node
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+      - job_name: 'kubernetes-service-endpoints'
+        kubernetes_sd_configs:
+        - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
+          action: replace
+          target_label: __scheme__
+          regex: (https?)
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+          action: replace
+          target_label: __address__
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+        - action: labelmap
+          regex: __meta_kubernetes_service_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+        - source_labels: [__meta_kubernetes_service_name]
+          action: replace
+          target_label: kubernetes_name
